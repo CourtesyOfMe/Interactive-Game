@@ -1,185 +1,128 @@
 #include <Adafruit_CircuitPlayground.h>
 
-int skillLevel = 1;
-int DEBOUNCE = 20;
-int sequenceLength = 0;
-int currentStep = 0;
-
-
-void chooseSkillLevel() {
-  while (!CircuitPlayground.rightButton()) {
-    if (CircuitPlayground.leftButton()) {
-      skillLevel = skillLevel + 1;
-      if (skillLevel > 4) skillLevel = 1;
-      
-      CircuitPlayground.clearPixels();
-      for (int p=0; p<skillLevel; p++) {
-        CircuitPlayground.setPixelColor(p, 0xFFFFFF);
-      }
-      
-      delay(DEBOUNCE); 
-    }
-  }
-}
-
-
-
-void newGame() {
-  // Set sequence length based on skill level
-  switch (skillLevel) {
-    case 1:
-      sequenceLength = 8;
-      break;
-    case 2:
-      sequenceLength = 14;
-      break;
-    case 3:
-      sequenceLength = 20;
-      break;
-    case 4:
-      sequenceLength = 31;
-      break;
-  }
-
-  // Populate the game sequence
-  for (int i=0; i<sequenceLength; i++) {
-    simonSequence[i] = random(4);
-  }
-
-  currentStep = 1;
-}
-
-
-
-void indicateButton(uint8_t b, uint16_t duration) {
-  CircuitPlayground.clearPixels();
-  for (int p=0; p<3; p++) {
-    CircuitPlayground.setPixelColor(simonButton[b].pixel[p], simonButton[b].color);
-  }
-  CircuitPlayground.playTone(simonButton[b].freq, duration);
-  CircuitPlayground.clearPixels();
-}
-
-
-
-void showSequence() {
-  // Set tone playback duration based on current sequence length
-  uint16_t toneDuration;
-  if (currentStep<=5) {
-    toneDuration = 420;
-  } else if (currentStep<=13) {
-    toneDuration = 320;
-  } else {
-    toneDuration = 220;
-  }
-
-  // Play back sequence up to current step
-  for (int i=0; i<currentStep; i++) {
-    delay(50);
-    indicateButton(simonSequence[i], toneDuration);
-  }
-}
-
-
-
-uint8_t getButtonPress() {
-  for (int b=0; b<4; b++) {
-    for (int p=0; p<2; p++) {
-      if (CircuitPlayground.readCap(simonButton[b].capPad[p]) > CAP_THRESHOLD) {
-        indicateButton(b, DEBOUNCE);
-        return b;
-      }
-    }
-  }
-  return NO_BUTTON;
-}
-
-
-
-void gameLost(int b) {
-  // Show button that should have been pressed
-  for (int p=0; p<3; p++) {
-    CircuitPlayground.setPixelColor(simonButton[b].pixel[p], simonButton[b].color);
-  }
-
-  // Play sad sound :(
-  CircuitPlayground.playTone(FAILURE_TONE, 1500);
- 
-  // And just sit here until reset
-  while (true) {}
-}
-
-
-
-void gameWon() {
-  // Play 'razz' special victory signal 
-  for (int i=0; i<3; i++) {
-    indicateButton(3, 100);  // RED
-    indicateButton(1, 100);  // YELLOW
-    indicateButton(2, 100);  // BLUE
-    indicateButton(0, 100);  // GREEN
-  }
-  indicateButton(3, 100);  // RED
-  indicateButton(1, 100);  // YELLOW
-
-  // Change tones to failure tone
-  for (int b=0; b<4; b++) simonButton[b].freq = FAILURE_TONE;
-
-  // Continue for another 0.8 seconds
-  for (int i=0; i<2; i++) {
-    indicateButton(2, 100);  // BLUE
-    indicateButton(0, 100);  // GREEN
-    indicateButton(3, 100);  // RED
-    indicateButton(1, 100);  // YELLOW
-  }
-
-  // Change tones to silence
-  for (int b=0; b<4; b++) simonButton[b].freq = 0;
-
-  // Loop lights forever
-  while (true) {
-    indicateButton(2, 100);  // BLUE
-    indicateButton(0, 100);  // GREEN
-    indicateButton(3, 100);  // RED
-    indicateButton(1, 100);  // YELLOW
-  }
-}
-
-
+const int maxRounds = 10; // Maximum rounds in the game
+int sequence[maxRounds]; // Array to store the sequence
+int currentRound = 0; // Current round number
 
 void setup() {
   CircuitPlayground.begin();
-
-  skillLevel = 1;
-  CircuitPlayground.clearPixels();
-  CircuitPlayground.setPixelColor(0, 0xFFFFFF);
-  chooseSkillLevel();
-
-  randomSeed(millis());
-
-  newGame();
+  randomSeed(analogRead(0)); // Seed the random number generator
+  startNewGame();
+  Serial.begin(9600);
 }
 
-
 void loop() {
-  // Show sequence up to current step
+  // Show the sequence to the player
   showSequence();
 
-  // Read player button presses
-  for (int s=0; s<currentStep; s++) {
-    startGuessTime = millis();
-    guess = NO_BUTTON;
-    while ((millis() - startGuessTime < GUESS_TIMEOUT) && (guess==NO_BUTTON)) {
-      guess = getButtonPress();           
-    }
-    if (guess != simonSequence[s]) {
-      gameLost(simonSequence[s]);
+  // Wait for player input and check if it's correct
+  if (!getPlayerInput()) {
+    // If the player makes a mistake, end the game
+    gameOver();
+    startNewGame();
+  } else {
+    // If the player is correct, go to the next round
+    currentRound++;
+    if (currentRound == maxRounds) {
+      // If the player completes all rounds, they win
+      youWin();
+      startNewGame();
     }
   }
-  currentStep++;
-  if (currentStep > sequenceLength) {
-    delay(SEQUENCE_DELAY);
-    gameWon();
+}
+
+void startNewGame() {
+  currentRound = 0;
+  for (int i = 0; i < maxRounds; i++) {
+    sequence[i] = random(0, 4); // Generate a random sequence (0-3 for 4 LEDs)
   }
-  delay(SEQUENCE_DELAY);
+  delay(1000); // Wait a second before starting
+}
+
+void showSequence() {
+  for (int i = 0; i <= currentRound; i++) {
+    int led = sequence[i];
+    CircuitPlayground.setPixelColor(led, CircuitPlayground.colorWheel(led * 64));
+    CircuitPlayground.playTone(440 + led * 220, 500); // Different tone for each LED
+    delay(500);
+    CircuitPlayground.clearPixels();
+    delay(250);
+  }
+}
+
+bool getPlayerInput() {
+  for (int i = 0; i <= currentRound; i++) {
+    while (true) {
+      if (CircuitPlayground.readCap(1) > 1000) { // Check capacitive sensor A1
+        delay(50); // Debounce
+        while (CircuitPlayground.readCap(1) > 1000); // Wait for release
+        if (sequence[i] == 3) { // LED 3 is triggered by A1
+          flashLed(3);
+          break;
+        } else {
+          return false;
+        }
+      } else if (CircuitPlayground.readCap(0) > 1000) { // Check capacitive sensor A2
+        delay(50); // Debounce
+        while (CircuitPlayground.readCap(0) > 1000); // Wait for release
+        if (sequence[i] == 2) { // LED 2 is triggered by A2
+          flashLed(2);
+          break;
+        } else {
+          return false;
+        }
+      } else if (CircuitPlayground.readCap(2) > 1000) { // Check capacitive sensor A3
+        delay(50); // Debounce
+        while (CircuitPlayground.readCap(2) > 1000); // Wait for release
+        if (sequence[i] == 1) { // LED 1 is triggered by A3
+          flashLed(1);
+          break;
+        } else {
+          return false;
+        }
+      } else if (CircuitPlayground.readCap(3) > 1000) { // Check capacitive sensor A4
+        delay(50); // Debounce
+        while (CircuitPlayground.readCap(3) > 1000); // Wait for release
+        if (sequence[i] == 0) { // LED 0 is triggered by A4
+          flashLed(0);
+          break;
+        } else {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+void flashLed(int led) {
+  CircuitPlayground.setPixelColor(led, CircuitPlayground.colorWheel(led * 64));
+  CircuitPlayground.playTone(440 + led * 220, 300);
+  delay(300);
+  CircuitPlayground.clearPixels();
+}
+
+void gameOver() {
+  for (int i = 0; i < 3; i++) {
+    Serial.print("score= ");
+    Serial.println(currentRound);
+    CircuitPlayground.setPixelColor(0, 255, 0, 0);
+    CircuitPlayground.setPixelColor(1, 255, 0, 0);
+    CircuitPlayground.playTone(200, 500);
+    delay(500);
+    CircuitPlayground.clearPixels();
+    delay(500);
+  }
+}
+
+void youWin() {
+  for (int i = 0; i < 5; i++) {
+    Serial.print("YOU WIN! ");
+    CircuitPlayground.setPixelColor(0, 0, 255, 0);
+    CircuitPlayground.setPixelColor(1, 0, 255, 0);
+    CircuitPlayground.playTone(880, 500);
+    delay(500);
+    CircuitPlayground.clearPixels();
+    delay(500);
+  }
 }
